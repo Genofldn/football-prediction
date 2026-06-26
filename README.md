@@ -1,149 +1,139 @@
-# Football Prediction Pipeline
+# ⚽ Football & World Cup Match Prediction
 
-Predict match outcomes (Win/Draw/Loss), scorelines, Over/Under 2.5 goals, and BTTS across **24 leagues** — Big 5 Europe, Extra European leagues, and Americas. Primary use: **value bet detection** where model probability exceeds bookmaker implied probability by >4%.
+A production-style sports-prediction system covering **two model families**:
+
+1. **Club pipeline** — match outcomes (1X2), Over/Under 2.5, BTTS and scorelines across **24 leagues** (Europe + Americas), built on ~44,000 historical fixtures.
+2. **International pipeline** — a dedicated **national-team model** for the **2026 World Cup**, built on ~5,700 senior internationals.
+
+Both feed a **value-bet engine** that compares model probabilities against live bookmaker odds and flags positive-expected-value bets — with the calibration discipline to know when *not* to bet.
+
+> Built end-to-end: data engineering → feature engineering → modelling → backtesting → odds integration → reporting.
 
 ---
 
-## Quick Start
+## 📊 Measured performance (held-out test sets)
 
-```bash
-cd /Users/terrysmac/project/football-prediction
+### Club models — XGBoost (test season, ~8,900 matches)
+| Market | Metric | Score |
+|--------|--------|-------|
+| Match result (1X2) | Accuracy | **53.2%** |
+| Over/Under 2.5 | Accuracy / AUC | **61.6% / 0.667** |
+| Both Teams To Score | Accuracy / AUC | **59.8% / 0.639** |
 
-# 1. Set API keys
-source .env
+### World Cup model — national-team Elo + Dixon-Coles Poisson (554 held-out competitive internationals)
+| Market | Metric | Score |
+|--------|--------|-------|
+| Match result (1X2) | Accuracy | **65.3%** |
+| Match result (1X2) | Log-loss | **0.776** |
+| Draw calibration | model vs actual | **22.6% vs 21.7%** (+1.0%) |
 
-# 2. Install dependencies
-pip install -r requirements.txt
+*1X2 accuracy in the 53–65% range with well-calibrated probabilities is competitive with the betting market — the higher international figure reflects the larger talent gaps between national teams.*
 
-# 3. Initial data load (first time — runs across 2 days due to 100 req/day limit)
-python3 run_pipeline.py --init
+---
 
-# 4. Train models (after data is collected)
-python3 run_pipeline.py --train
+## 🧠 How it works
 
-# 5. Daily: update data + generate predictions
-python3 run_pipeline.py --update --predict
+### Club pipeline
 ```
+API-Football ─┐
+Odds API ─────┼─► SQLite ─► feature engineering ─► XGBoost (1X2/OU/BTTS) ─┐
+NewsAPI ──────┘     (Elo, form, H2H,            └► Dixon-Coles Poisson ───┼─► value-bet report
+                     injuries, sentiment)          (scorelines)            ┘
+```
+- **Features (123):** Elo ratings, rolling form (last 5/10), head-to-head, season goal averages, rest days, derby flags, injury counts, news-sentiment scores (Twitter/XLM-RoBERTa on 2,900+ articles).
+- **XGBoost** — separate classifiers for 1X2, O/U 2.5 and BTTS, each tuned with **50 Optuna trials**.
+- **Dixon-Coles Poisson** — per-league attack/defence strengths, home advantage, low-score correction (ρ) and exponential time-decay weighting.
+
+### International pipeline
+- **Data:** World Cups, continental championships (Euro, Copa, AFCON, Asian Cup, Gold Cup), Nations Leagues, all six confederations' WC qualifiers, and 2,600+ friendlies — filtered to **senior men's national teams only**.
+- **National-team Elo** — competition-weighted K-factor, goal-difference multiplier, neutral-venue aware.
+- **Neutral-aware Dixon-Coles Poisson** — home advantage applied only for genuine host matches; World Cup games scored as neutral.
+- **Model selection by time-based backtest** (`--tune`): trains on pre-cutoff matches, scores log-loss/accuracy on later competitive games, grid-searching the time-decay and Poisson/Elo blend.
 
 ---
 
-## Project Structure
+## 💰 Value-bet detection — and knowing when not to bet
 
+A bet is flagged when the model probability beats the **de-vigged** market consensus by **>4%**:
+```
+edge = model_probability − devigged_market_probability      (flag if edge > 4%)
+EV   = model_probability × best_available_odds − 1
+```
+Odds are pulled live from **40+ bookmakers** (The Odds API) and de-vigged before comparison; the best price across books is used for EV.
+
+**Calibration guardrails (this is the important part).** The system validates each market against actuals before trusting it for value:
+- **1X2** is backtested and well-calibrated → value flags are surfaced.
+- During the World Cup run, the model's **Over 2.5** sat ~10% below the market across the whole slate, while its historical bias was only −2.7%. That gap was diagnosed as **model conservatism, not edge**, so O/U value flags were **suppressed** rather than bet. A model that disagrees with the market in one direction *every single time* is biased, not sharp — and the pipeline is built to catch that.
+
+---
+
+## 🗂️ Project structure
 ```
 football-prediction/
-├── .env                          # API keys (NOT committed to git)
-├── run_pipeline.py               # Master orchestration script
-├── requirements.txt
-│
+├── run_pipeline.py                 # orchestration: --init / --update / --train / --predict
 ├── config/
-│   ├── settings.py               # API keys, paths, rate limits
-│   └── leagues.py                # 24 leagues with API-Football IDs
-│
+│   ├── settings.py                 # env-based API keys, paths, rate limits
+│   └── leagues.py                  # 24 league IDs + season conventions
 ├── data_collection/
-│   ├── collect_fixtures.py       # Historical match results (API-Football)
-│   ├── collect_team_stats.py     # Team season stats (goals, possession, etc.)
-│   └── collect_odds.py           # Pre-match odds (Odds API)
-│
+│   ├── collect_fixtures.py         # historical results (API-Football)
+│   ├── collect_odds.py             # pre-match odds (The Odds API, 40+ books)
+│   ├── collect_team_stats.py       # team season stats
+│   ├── collect_injuries.py         # injury data
+│   ├── collect_sentiment.py        # news sentiment (Twitter/XLM-RoBERTa)
+│   └── collect_internationals.py   # senior national-team match history
 ├── features/
-│   └── build_features.py         # Elo, form, H2H, context — all features
-│
+│   └── build_features.py           # Elo, form, H2H, injuries, sentiment → 123 features
 ├── models/
-│   ├── xgboost_model.py          # XGBoost 1X2 / OU2.5 / BTTS ensemble
-│   ├── poisson_model.py          # Dixon-Coles Poisson scoreline model
-│   └── saved/                    # Trained model artifacts
-│
-├── predictions/
-│   ├── generate_report.py        # Merge models, flag value bets, email report
-│   └── reports/                  # Daily prediction files (text + JSON)
-│
-└── data/
-    ├── football.db               # SQLite: fixtures, odds, team_stats
-    └── parquet/                  # Processed data for model training
+│   ├── xgboost_model.py            # club 1X2 / OU2.5 / BTTS
+│   ├── poisson_model.py            # club Dixon-Coles scorelines
+│   └── national_team_model.py      # World Cup Elo + Dixon-Coles (+ --tune backtest)
+└── predictions/
+    ├── generate_report.py          # club value-bet report
+    └── wc_report.py                # World Cup report + value bets
+```
+*Data, trained models and API keys are git-ignored — collect/train locally to reproduce.*
+
+---
+
+## 🚀 Quick start
+```bash
+pip install -r requirements.txt
+cp .env.example .env          # add your API keys (API-Football, Odds API, NewsAPI)
+source .env
+
+# Club pipeline
+python3 run_pipeline.py --init                # one-time historical load
+python3 run_pipeline.py --train               # rebuild features + train XGBoost & Poisson
+python3 run_pipeline.py --update --predict    # refresh data + value-bet report
+
+# World Cup pipeline
+python3 data_collection/collect_internationals.py   # national-team history
+python3 models/national_team_model.py --tune        # backtest to choose hyperparameters
+python3 models/national_team_model.py --train        # fit Elo + Dixon-Coles
+python3 predictions/wc_report.py                     # predictions + value bets
 ```
 
 ---
 
-## Data Sources
-
-| Source | What | Free Tier |
-|--------|------|-----------|
-| API-Football | Fixtures, results, team stats | 100 req/day |
-| Odds API | Pre-match odds (40+ bookmakers) | 500 req/month |
-| NewsAPI | Injuries, transfers, team news | Existing key |
+## 🛠️ Tech stack
+**Python** · scikit-learn · **XGBoost** · SciPy (custom Dixon-Coles MLE) · pandas / NumPy · **Optuna** · HuggingFace Transformers (sentiment) · SQLite · Parquet · The Odds API · API-Football
 
 ---
 
-## API Request Budget (Free Tier)
-
-### Initial load (one-time, spread over ~3 days)
-| Step | Requests |
-|------|----------|
-| Fixtures: 24 leagues × 6 seasons | 144 |
-| Team stats: ~400 teams × 6 seasons | 2,400 (spread over months) |
-| Odds: 19 sport keys | 19 |
-
-### Daily update
-| Step | Requests |
-|------|----------|
-| Fixtures (current season) | 24 |
-| Odds (all upcoming) | 19 |
-| Team stats (optional) | 0–24 |
-| **Total** | **~43/day** ✅ |
+## 📈 Data scale
+- **44,000+** club fixtures across 24 leagues, 5 seasons
+- **5,700** senior international matches (2018–2026)
+- **100,000+** injury records · **2,900+** sentiment-scored news articles
+- **40+ bookmakers** for live odds
 
 ---
 
-## Models
-
-### 1. XGBoost Ensemble
-- **Predicts**: Home Win / Draw / Away Win probabilities + Over/Under 2.5 + BTTS
-- **Features**: Rolling form (last 5, 10 matches), Elo ratings, H2H record, season averages, rest days, derby flag
-- **Training**: Seasons 2020–2023 → validate 2024 → predict 2025
-- **Tuning**: 50 Optuna trials per model
-
-### 2. Dixon-Coles Poisson
-- **Predicts**: Full scoreline distribution (P(0-0), P(1-0), ... P(6-6))
-- **Outputs**: Most likely scoreline, expected goals, aggregated H/D/A probs
-- **Features**: Attack strength + defence weakness per team, home advantage, time-decay weighting
-- **Classic method**: Used by professional betting syndicates since 1997
-
-### Ensemble
-Both models' H/D/A probabilities are averaged for the final prediction.
+## 🗺️ Roadmap
+- AWS serving: S3 + Lambda/EventBridge scheduled predictions, SNS email alerts
+- Closing-line value tracking to measure real betting edge over time
+- Lineup/rotation signal for tournament dead-rubbers
+- Continuous backtest CI on each retrain
 
 ---
 
-## Value Bet Detection
-
-A **value bet** is flagged when:
-```
-model_probability > bookmaker_implied_probability + 4%
-```
-
-Bookmaker implied probability = 1 / decimal_odds (e.g. odds 2.50 → implied = 40%)
-
-If the model gives 46% chance of a home win but the bookmaker implies only 40%, that's a 6% edge = value bet.
-
-**Second divisions** tend to have the biggest inefficiencies — bookmakers focus attention on the Premier League.
-
----
-
-## 24 Leagues
-
-### Big 5 Europe
-Premier League, Championship, La Liga, La Liga 2, Bundesliga, 2. Bundesliga, Serie A, Serie B, Ligue 1, Ligue 2
-
-### Extra European
-Eredivisie, Eerste Divisie, Primeira Liga, Liga Portugal 2, Süper Lig, TFF First League, Pro League, Austrian Bundesliga, Austrian 2. Liga
-
-### Americas
-MLS, Liga MX, Brazilian Série A, Argentine Primera División
-
----
-
-## AWS Deployment (future)
-
-Mirrors the Bitcoin prediction pipeline:
-- **S3**: `bitcoin-prediction-option4-production-654654488711/football/`
-- **DynamoDB**: `football-predictions-production`
-- **Lambda**: trigger 2h before each match day (EventBridge)
-- **SNS**: email predictions to oluwaseyifamuyide@gmail.com
-- **SageMaker**: endpoints for XGBoost and Poisson models
+*Personal project demonstrating end-to-end ML engineering: data pipelines, feature engineering, classical + ML models, rigorous backtesting, and honest probability calibration.*
