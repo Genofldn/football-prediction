@@ -1,0 +1,26 @@
+# Football Prediction Pipeline — Dependencies
+#
+# Two requirements files are provided; choose the right one:
+#
+#   requirements-inference.txt   ← AWS Lambda container (inference only, ~300 MB image)
+#   requirements-collection.txt  ← Local Mac / EC2 (data collection + training, ~3 GB with torch)
+#
+# Quick reference — what runs where:
+#   Lambda:  collect_fixtures.py --update, collect_odds.py, build_features.py --upcoming,
+#            xgboost_model.py --predict, poisson_model.py --predict-upcoming,
+#            generate_report.py
+#   Local:   everything above + collect_sentiment.py (torch/RoBERTa),
+#            xgboost_model.py --train (optuna), poisson_model.py --train
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# Minimal install (inference + collection minus torch/transformers):
+# ─────────────────────────────────────────────────────────────────────────────
+requests==2.32.3
+pandas==2.3.0
+numpy==1.26.4
+pyarrow==24.0.0
+xgboost==3.2.0
+scikit-learn==1.7.0
+scipy==1.15.3
+boto3==1.38.32
+optuna==4.9.0

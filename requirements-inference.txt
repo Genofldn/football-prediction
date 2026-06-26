@@ -1,0 +1,24 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# requirements-inference.txt  —  Lambda container / production inference
+#
+# Use this when building the Docker image for AWS Lambda:
+#   pip install -r requirements-inference.txt
+#
+# Pinned to local-tested versions (Python 3.12, Amazon Linux 2023 x86_64).
+# Do NOT add optuna, torch, or transformers here — they are training/collection
+# only and add >1 GB to the image.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# HTTP & data I/O
+requests==2.32.3
+pandas==2.3.0
+numpy==1.26.4
+pyarrow==24.0.0
+
+# ML inference
+xgboost==3.2.0
+scikit-learn==1.7.0
+scipy==1.15.3
+
+# AWS SDK
+boto3==1.38.32

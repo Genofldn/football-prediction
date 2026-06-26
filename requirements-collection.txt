@@ -1,0 +1,35 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# requirements-collection.txt  —  Local Mac / EC2 data collection + training
+#
+# Superset of requirements-inference.txt — includes everything needed to:
+#   • Collect fixtures, odds, team stats, injuries (API-Football / Odds API)
+#   • Collect & score news sentiment (NewsAPI + Twitter-RoBERTa)
+#   • Train XGBoost (Optuna hyperparameter tuning)
+#   • Train Poisson (scipy.optimize)
+#   • Run the full pipeline locally
+#
+# Install:
+#   pip install -r requirements-collection.txt
+#
+# Note: torch uses MPS on Apple Silicon (M1/M2).  On Linux it falls back to
+# CUDA (if available) then CPU — no code change needed.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Core (same as requirements-inference.txt) ─────────────────────────────────
+requests==2.32.3
+pandas==2.3.0
+numpy==1.26.4
+pyarrow==24.0.0
+xgboost==3.2.0
+scikit-learn==1.7.0
+scipy==1.15.3
+boto3==1.38.32
+
+# ── Training only ──────────────────────────────────────────────────────────────
+optuna==4.9.0           # hyperparameter tuning (xgboost_model.py --train)
+
+# ── Sentiment collection only (local Mac / GPU EC2) ───────────────────────────
+# torch & transformers are NOT installed in the Lambda container.
+# collect_sentiment.py is never called by Lambda.
+torch==2.7.1            # MPS on Apple Silicon; falls back to CPU
+transformers==5.9.0     # Twitter-RoBERTa + XLM-RoBERTa + DeBERTa NLI

@@ -1,0 +1,33 @@
+# ── Secrets — NEVER commit ──
+.env
+*.env
+config/secrets.py
+
+# ── Data (large, regenerable from APIs) ──
+data/
+*.db
+*.sqlite
+*.parquet
+
+# ── Trained models (large binaries) ──
+models/saved/
+*.pkl
+*.h5
+*.joblib
+
+# ── Generated reports ──
+predictions/reports/
+
+# ── Python ──
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.ipynb_checkpoints/
+
+# ── OS / editor ──
+.DS_Store
+.idea/
+.vscode/
+*.swp
